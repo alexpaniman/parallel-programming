@@ -1,3 +1,4 @@
+#include <numeric>
 #include <thread>
 #include <future>
 #include <cmath>
@@ -83,29 +84,32 @@ double integrate_to_precision(integration_scope scope, integration_method_func_t
 
 
 int main() {
-    const std::size_t threads_num = 8;
+    const std::size_t threads_num = 15;
+    const double precision = 1e-9;
+
     integration_scope scope {
         [](double x) { return sin(1/x); },
-        .1, 1.
+        .00001, 1.
     };
 
-    std::vector<std::future<double>> futures;
-    for (std::size_t i = 0; i < threads_num; ++i) {
-        futures.emplace_back(
-            std::async(std::launch::async, [&] {
-                double subscope_length = (scope.b - scope.a) / threads_num;
-                integration_scope subscope { scope.f,
-                    scope.a + subscope_length * i,
-                    scope.a + subscope_length * (i + 1)
-                };
-                return integrate_to_precision(subscope, integrate_simpson, 1e-9);
-            })
-        );
+    std::vector<double> results(threads_num);
+    {
+        std::vector<std::jthread> threads;
+
+        for (std::size_t i = 0; i < threads_num; ++i) {
+            double subscope_length = (scope.b - scope.a) / threads_num;
+            integration_scope subscope { scope.f,
+                scope.a + subscope_length * i,
+                scope.a + subscope_length * (i + 1)
+            };
+            std::cout << i << "\t[" << subscope.a << ",\t" << subscope.b << "]\n";
+
+            threads.emplace_back([=, &result = results[i]] {
+                result = integrate_to_precision(subscope, integrate_trapezoid, precision);
+            });
+        }
     }
 
-    double result_accumulated = 0.; 
-    for (std::size_t i = 0; i < threads_num - 1; ++i)
-        result_accumulated += futures[i].get();
-
-    std::cout << result_accumulated << "\n";
+    double integral = std::accumulate(results.begin(), results.end(), 0.); 
+    std::cout << integral << "\n";
 }

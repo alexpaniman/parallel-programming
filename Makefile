@@ -1,17 +1,21 @@
 CXX := mpic++
 CC := mpicc
 
-main.: lab-1.o
-	$(CXX) $^ -o main
+lab-1: lab-1.cpp
+	$(CXX) $^ -o lab-1
 
-main: main.o functions.o
-	$(CXX) $^ -o main
+lab-2: lab-2.cpp
+	clang++ -std=c++20 $^ -o lab-2
 
-.PHONY: run
-run: main.o
-	mpirun -np 3 main
-	python3 plot-solution.py
+.PHONY: run-1
+run-1: lab-1
+	mpirun -np 3 lab-1
+	# python3 plot-solution.py
+
+.PHONY: run-2
+run-2: lab-2
+	time ./lab-2
 
 .PHONY: clean
 clean:
-	rm main *.o *.csv
+	rm -f lab-1 lab-2 *.o *.csv
