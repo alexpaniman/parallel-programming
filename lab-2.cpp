@@ -1,4 +1,5 @@
 #include <chrono>
+#include <condition_variable>
 #include <iomanip>
 #include <mutex>
 #include <numeric>
@@ -56,10 +57,15 @@ public:
     void push(type value) {
         std::lock_guard<std::mutex> lock(mutex_);
         stack_.push_back(std::move(value));
+
+        new_task_.notify_one();
     }
 
-    std::optional<type> pop() {
-        std::lock_guard<std::mutex> lock(mutex_);
+    std::optional<type> wait_task(bool &should_immediately_stop) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        new_task_.wait(lock, [this, &should_immediately_stop] {
+            return should_immediately_stop || stack_.size() != 0;
+        });
 
         if (stack_.empty())
             return {};
@@ -67,12 +73,33 @@ public:
         type value = stack_.back();
         stack_.pop_back();
 
+        // I suppose that however is getting this task can push more:
+        ++ units_that_push_;
+
         return value;
     }
+
+    void sub_potential_pussher() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        -- units_that_push_;
+        emptied_.notify_all();
+    }
+
+    void wait_empty() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        emptied_.wait(lock, [this] {
+            return units_that_push_ == 0 && stack_.empty();
+        });
+    }
+
 
 private:
     std::vector<type> stack_;
     std::mutex mutex_;
+
+    std::condition_variable new_task_;
+    std::condition_variable emptied_;
+    std::size_t units_that_push_;
 };
 
 
@@ -95,6 +122,9 @@ public:
             std::vector<std::jthread> threads;
             for (std::size_t i = 0; i < num_threads_; ++i)
                 threads.emplace_back(std::bind(&integrator_pool::run_single_thread, this, i));
+
+            tasks_.wait_empty();
+            std::cerr << "xxxxxxxxx\n";
         }
 
         return std::accumulate(results_.begin(), results_.end(), 0.); 
@@ -106,7 +136,6 @@ private:
     double precision_;
     integration_scope main_scope_;
 
-
     struct integration_task {
         double a, b;
         int num_points;
@@ -115,11 +144,13 @@ private:
     locked_stack<integration_task> tasks_;
     std::condition_variable finished_;
 
+    bool should_stop_immediately_ = false;
+    std::size_t busy_threads_ = 0;
     std::vector<double> results_;
 
 
     void run_single_thread(int thread_index) {
-        while (std::optional<integration_task> maybe_task = tasks_.pop()) {
+        while (std::optional<integration_task> maybe_task = tasks_.wait_task(should_stop_immediately_)) {
             auto task = *maybe_task;
 
             while (true) {
@@ -131,6 +162,9 @@ private:
                 double difference = std::abs(integral_1x_points - integral_2x_points);
                 if (difference < precision_) {
                     results_[thread_index] += integral_2x_points;
+
+                    // notify stack that we've completed our job: 
+                    tasks_.sub_potential_pussher();
 
                     // ----------------- LOGGING -----------------
                     std::stringstream ss;
