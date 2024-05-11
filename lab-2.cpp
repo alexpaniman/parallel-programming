@@ -10,6 +10,7 @@
 #include <iostream>
 #include <optional>
 #include <sstream>
+#include <functional>
 
 
 typedef double (*integration_func_type)(double x);
@@ -81,58 +82,76 @@ static void print_precise(std::ostream &os, double number) {
 }
 
 
-struct integration_task {
-    integration_scope scope;
-    int number_of_points;
-};
-
-class integrator_thread {
+class integrator_pool {
 public:
-    integrator_thread(double precison, locked_stack<integration_task> &tasks, double &result):
-        precision_(precison), tasks_(tasks), result_(result) {}
+    integrator_pool(integration_scope main_scope, double precision, std::size_t num_threads):
+        num_threads_(num_threads), precision_(precision), main_scope_(main_scope),
+        results_(num_threads, 0) {}
+
+    double run() {
+        tasks_.push({ main_scope_.a, main_scope_.b, 2 });
+
+        {
+            std::vector<std::jthread> threads;
+            for (std::size_t i = 0; i < num_threads_; ++i)
+                threads.emplace_back(std::bind(&integrator_pool::run_single_thread, this, i));
+        }
+
+        return std::accumulate(results_.begin(), results_.end(), 0.); 
+    }
+
+private:
+    std::size_t num_threads_;
+
+    double precision_;
+    integration_scope main_scope_;
 
 
-    void operator()() {
+    struct integration_task {
+        double a, b;
+        int num_points;
+    };
+
+    locked_stack<integration_task> tasks_;
+    std::condition_variable finished_;
+
+    std::vector<double> results_;
+
+
+    void run_single_thread(int thread_index) {
         while (std::optional<integration_task> maybe_task = tasks_.pop()) {
             auto task = *maybe_task;
 
             while (true) {
-                double previous_integral = integrate_trapezoid(task.scope, task.number_of_points);
-                task.number_of_points *= 2;
+                integration_scope scope { main_scope_.f, task.a, task.b };
 
-                double current_integral = integrate_trapezoid(task.scope, task.number_of_points);
-                double difference = std::abs(previous_integral - current_integral);
+                double integral_1x_points = integrate_trapezoid(scope, task.num_points);
+                double integral_2x_points = integrate_trapezoid(scope, task.num_points *= 2);
+
+                double difference = std::abs(integral_1x_points - integral_2x_points);
                 if (difference < precision_) {
-                    result_ += current_integral;
+                    results_[thread_index] += integral_2x_points;
 
+                    // ----------------- LOGGING -----------------
                     std::stringstream ss;
 
                     ss << std::this_thread::get_id() << ":\t[";
-                    print_precise(ss, task.scope.a); ss << "\t\t";
-                    print_precise(ss, task.scope.b); ss << "]\n";
+                    print_precise(ss, scope.a); ss << "\t\t";
+                    print_precise(ss, scope.b); ss << "]\n";
 
                     std::cerr << ss.str();
+                    // -------------------------------------------
                     break;
                 }
 
-                // Didn't get good enough results yet...
-                integration_task new_task = task;
-                double middle_point = (task.scope.a + task.scope.b) / 2.;
-                new_task.scope.a = middle_point;
+                double middle_point = (scope.a + scope.b) / 2.;
+                tasks_.push({ middle_point, task.b, task.num_points });
 
                 // Shrink current scope in half:
-                task.scope.b = middle_point;
-                tasks_.push(new_task); // Add half of the task into stack
+                task.b = middle_point;
             }
         }
     }
-
-
-private:
-    double precision_;
-
-    locked_stack<integration_task> &tasks_;
-    double &result_;
 };
 
 
@@ -144,20 +163,10 @@ int main() {
 
     integration_scope scope {
         [](double x) { return sin(1./x); },
-        1e-5, 1.
+        1e-10, 1.
     };
 
-    std::vector<double> results(threads_num, 0);
+    integrator_pool pool(scope, 1e-10, 32);
 
-    locked_stack<integration_task> tasks;
-    tasks.push({ scope, 2 });
-
-    {
-        std::vector<std::jthread> threads;
-        for (std::size_t i = 0; i < threads_num; ++i)
-            threads.emplace_back(integrator_thread(precision, tasks, results[i]));
-    }
-
-    double integral = std::accumulate(results.begin(), results.end(), 0.); 
-    std::cout << "integral: " << integral << "\n";
+    std::cout << "integral: " << pool.run() << "\n";
 }
