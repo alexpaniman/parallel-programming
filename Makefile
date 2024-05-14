@@ -10,7 +10,7 @@ lab-2: lab-2.cpp
 .PHONY: run-1
 run-1: lab-1
 	mpirun -np 3 lab-1
-	# python3 plot-solution.py
+	python3 plot-solution.py
 
 .PHONY: run-2
 run-2: lab-2

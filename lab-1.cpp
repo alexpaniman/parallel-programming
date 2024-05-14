@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <vector>
 
-const int ROOT = 0; // ранг главного процесса
+const int ROOT = 0; // root processor rank
 
 const double t_max = 50;
 const double x_max = 60;
@@ -30,7 +30,7 @@ double ksi(double t){
 
 void fill_layer(int knot_t, int knot_x, std::vector<std::vector<double>> &u) {
     if (knot_x != x_max / x_step - 1) {
-        // центральная явная трехточечная схема
+        // central explicit 3-point scheme
         u[knot_t + 1][knot_x] = func(knot_t, knot_x) * t_step + 
                       1 / 2. * (u[knot_t][knot_x + 1] + 
                       u[knot_t][knot_x - 1]) -  
@@ -38,14 +38,14 @@ void fill_layer(int knot_t, int knot_x, std::vector<std::vector<double>> &u) {
     } 
     
     else {
-        // явный левый уголок
+        // explicit left corner
         u[knot_t + 1][knot_x] = func(knot_t, knot_x) * t_step + 
                       u[knot_t][knot_x] -
                       t_step / x_step * (u[knot_t][knot_x] - u[knot_t][knot_x - 1]);
     }
 }
 
-// Печать количества процессов и времени выполнения
+// Print number of processes and total execution time
 void output_results(int num_knots_t, int num_knots_x, std::vector<std::vector<double>> &u) {
     std::ofstream results("results.csv");
     results << "x,t,u\n";
@@ -81,7 +81,7 @@ void init_u(int &num_knots_x, int &num_knots_t, std::vector<std::vector<double>>
 
 void common_process_computation(int &rank, int &num_knots_t, std::vector<std::vector<double>> &u, int &x_0, int &x_1, int &knot_t) {
     if (knot_t > 0) {
-        // принимаем соседние точки к крайним
+        // We take neighboring points as corner ones
         MPI_Recv(&u[knot_t][x_0 - 1], 1, MPI_DOUBLE, rank - 1, knot_t,  MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         MPI_Recv(&u[knot_t][x_1], 1, MPI_DOUBLE, rank + 1, knot_t, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     }
@@ -90,7 +90,7 @@ void common_process_computation(int &rank, int &num_knots_t, std::vector<std::ve
     fill_layer(knot_t, x_1 - 1, u);
 
     if (knot_t < num_knots_t - 2) {
-        // отправляем наши вычисления соседям
+        // Sending our computations to neighbors
         MPI_Send(&u[knot_t + 1][x_0], 1, MPI_DOUBLE, rank - 1, knot_t + 1, MPI_COMM_WORLD);
         MPI_Send(&u[knot_t + 1][x_1 - 1], 1, MPI_DOUBLE, rank + 1, knot_t + 1, MPI_COMM_WORLD);
     }
@@ -117,24 +117,23 @@ void last_process_computation(int &rank, int &num_knots_t, std::vector<std::vect
 }
 
 void parallel_solution(int rank, int num_knots_x, int num_knots_t, int size, std::vector<std::vector<double>> &u) {
-    // количество вычисляемых точек для всех процессов, кроме главного
+    // Number of evaluated points for all processes except main ones
     int part = num_knots_x / size;
 
-    // количество сдвига (доп точки для главного процесса)
+    // Additional (remaining) points for main processor
     int shift = num_knots_x % size;
 
-    // в зависимости от процесса выбор
-    // количества вычисляемых точек
+    // Depending on processor choose number of calculated points
     int num_knots = (rank == ROOT) ? (part + shift) : part;
 
-    // первая точка вычислений
+    // First computation point
     int x_0 = (rank == ROOT) ? (0) : (part * rank + shift);
 
-    // последняя точка вычислений (не включительно)
+    // Last computation point (excluding)
     int x_1 = x_0 + num_knots;
 
-    for (int knot_t = 0; knot_t < num_knots_t - 1; knot_t++) { // время
-        for (int knot_x = x_0 + 1; knot_x < x_1 - 1; knot_x++) { // координата
+    for (int knot_t = 0; knot_t < num_knots_t - 1; knot_t++) { // time
+        for (int knot_x = x_0 + 1; knot_x < x_1 - 1; knot_x++) { // coordinate
             // заполняем все внутренние точки, неоходимые
             // данные для вычислений которых процесс уже знает
             fill_layer(knot_t, knot_x, u);
