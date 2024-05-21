@@ -211,9 +211,9 @@ int main() {
     };
 
     integrator_pool pool(scope, precision, threads_num);
+    double result = pool.run();
 
-    std::stringstream ss;
-    ss << "integral: " << pool.run() << "\n";
-
-    std::cerr << ss.str();
+    std::cerr << "\n\ndefinite integral: ";
+    print_precise(std::cerr, result);
+    std::cerr << "\n\n";
 }
