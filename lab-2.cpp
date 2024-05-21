@@ -110,7 +110,7 @@ private:
 
 
 static void print_precise(std::ostream &os, double number) {
-    os << std::setw(20) << std::fixed << std::setprecision(10) << number;
+    os << std::setw(37) << std::fixed << std::setprecision(30) << number;
 }
 
 
