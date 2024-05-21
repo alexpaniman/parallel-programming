@@ -1,11 +1,8 @@
-#include <chrono>
 #include <condition_variable>
 #include <iomanip>
 #include <mutex>
 #include <numeric>
-#include <queue>
 #include <thread>
-#include <future>
 #include <cmath>
 #include <vector>
 #include <iostream>
@@ -61,10 +58,10 @@ public:
         new_task_.notify_one();
     }
 
-    std::optional<type> wait_task(bool &should_immediately_stop) {
+    std::optional<type> wait_task() {
         std::unique_lock<std::mutex> lock(mutex_);
-        new_task_.wait(lock, [this, &should_immediately_stop] {
-            return should_immediately_stop || stack_.size() != 0;
+        new_task_.wait(lock, [this] {
+            return should_stop_immediately_ || stack_.size() != 0;
         });
 
         if (stack_.empty())
@@ -90,8 +87,9 @@ public:
         emptied_.wait(lock, [this] {
             return units_that_push_ == 0 && stack_.empty();
         });
-    }
 
+        notify_no_more_tasks();
+    }
 
 private:
     std::vector<type> stack_;
@@ -99,7 +97,14 @@ private:
 
     std::condition_variable new_task_;
     std::condition_variable emptied_;
-    std::size_t units_that_push_;
+    std::size_t units_that_push_ = 0;
+
+    bool should_stop_immediately_ = false;
+
+    void notify_no_more_tasks() {
+        should_stop_immediately_ = true;
+        new_task_.notify_all();
+    }
 };
 
 
@@ -124,7 +129,6 @@ public:
                 threads.emplace_back(std::bind(&integrator_pool::run_single_thread, this, i));
 
             tasks_.wait_empty();
-            std::cerr << "xxxxxxxxx\n";
         }
 
         return std::accumulate(results_.begin(), results_.end(), 0.); 
@@ -144,13 +148,12 @@ private:
     locked_stack<integration_task> tasks_;
     std::condition_variable finished_;
 
-    bool should_stop_immediately_ = false;
     std::size_t busy_threads_ = 0;
     std::vector<double> results_;
 
 
     void run_single_thread(int thread_index) {
-        while (std::optional<integration_task> maybe_task = tasks_.wait_task(should_stop_immediately_)) {
+        while (std::optional<integration_task> maybe_task = tasks_.wait_task()) {
             auto task = *maybe_task;
 
             while (true) {
