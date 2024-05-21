@@ -181,11 +181,18 @@ private:
                     break;
                 }
 
-                double middle_point = (scope.a + scope.b) / 2.;
-                tasks_.push({ middle_point, task.b, task.num_points });
+                double length = (task.b - task.a) / (double) num_threads_;
 
-                // Shrink current scope in half:
-                task.b = middle_point;
+                double a = task.a;
+                for (size_t i = 0; i < num_threads_ - 1; ++i) {
+                    double b = a + length;
+                    tasks_.push({ a, b, task.num_points });
+
+                    a = b;
+                }
+
+                // Shrink current scope to the length of one interval:
+                task.a = a;
             }
         }
     }
@@ -196,14 +203,17 @@ private:
 
 int main() {
     const std::size_t threads_num = 32;
-    const double precision = 1e-10;
+    const double precision = 1e-15;
 
     integration_scope scope {
         [](double x) { return sin(1./x); },
-        1e-10, 1.
+        1e-15, 1000000.
     };
 
-    integrator_pool pool(scope, 1e-10, 32);
+    integrator_pool pool(scope, precision, threads_num);
 
-    std::cout << "integral: " << pool.run() << "\n";
+    std::stringstream ss;
+    ss << "integral: " << pool.run() << "\n";
+
+    std::cerr << ss.str();
 }
